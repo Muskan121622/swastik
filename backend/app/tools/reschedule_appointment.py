@@ -18,6 +18,7 @@ from app.schemas.results import (success, failure, IDENTITY_UNCONFIRMED,
                                  SLOT_NOT_FOUND, SLOT_NOT_OPEN,
                                  APPOINTMENT_NOT_FOUND, APPOINTMENT_AMBIGUOUS,
                                  CONVERSATION_ESCALATED)
+from app.tools.display import appointment_brief, slot_text
 
 
 class RescheduleArgs(BaseModel):
@@ -48,11 +49,10 @@ def _find_target(db: Session, args: RescheduleArgs):
                              "This patient has no active appointment.")
     if len(rows) > 1:
         return None, failure(APPOINTMENT_AMBIGUOUS,
-                             "Patient has multiple active appointments. "
-                             "Ask which appointment_id to move.",
-                             candidates=[{"appointment_id": a.id,
-                                          "doctor_id": a.doctor_id,
-                                          "slot_id": a.slot_id} for a in rows])
+                             "Patient has multiple active appointments. Ask which "
+                             "one to move, using the day/time/doctor shown, or "
+                             "the appointment_id if the caller states one.",
+                             candidates=[appointment_brief(db, a) for a in rows])
     return rows[0], None
 
 
@@ -81,7 +81,7 @@ def reschedule_appointment(db: Session, conversation_id: str, args: RescheduleAr
     if taken:
         return failure(SLOT_NOT_OPEN, "The requested slot is no longer available.")
 
-    old = {"slot_id": appt.slot_id}
+    old = appointment_brief(db, appt)
     appt.slot_id = args.new_slot_id
     appt.doctor_id = new_slot.doctor_id
     try:
@@ -92,9 +92,14 @@ def reschedule_appointment(db: Session, conversation_id: str, args: RescheduleAr
 
     patient = db.get(Patient, args.patient_id)
     doctor = db.get(Doctor, new_slot.doctor_id)
+    to_slot = {"slot_id": new_slot.id, "date": new_slot.date.isoformat(),
+               "start": new_slot.start_time, "end": new_slot.end_time,
+               "doctor_id": new_slot.doctor_id,
+               "doctor": doctor.name if doctor else None}
+    # `display` on both ends so the reply copies committed text instead of
+    # recomputing a weekday it cannot see.
+    old["display"] = old.get("display") or ""
+    to_slot["display"] = slot_text(new_slot.date.isoformat(), new_slot.start_time,
+                                   new_slot.end_time, doctor.name if doctor else None)
     return success("RESCHEDULED", appointment_id=appt.id, patient=patient.name,
-                   from_slot=old,
-                   to_slot={"slot_id": new_slot.id, "date": new_slot.date.isoformat(),
-                            "start": new_slot.start_time, "end": new_slot.end_time,
-                            "doctor_id": new_slot.doctor_id,
-                            "doctor": doctor.name if doctor else None})
+                   from_slot=old, to_slot=to_slot)

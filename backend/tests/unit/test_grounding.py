@@ -45,3 +45,46 @@ def test_non_mutation_chat_untouched():
 def test_escalation_claim_checked():
     lie = "I've handed you over to a human receptionist."
     assert ground_reply(lie, events=[]) == UNGROUNDED_FALLBACK
+
+
+# ---------- D7: a read-only turn must still answer, never greet -------------
+def rev(tool, ok, status, data):
+    return {"tool": tool, "status": "SUCCESS" if ok else "ERROR",
+            "result": {"ok": ok, "status": status, "data": data, "error": None}}
+
+
+def test_search_results_are_templated_not_dropped():
+    from app.agent.graph import _template_from_events, NO_REPLY_FALLBACK
+    events = [rev("search_slots", True, "OK", {"count": 3, "slots": [
+        {"slot_id": 1, "display": "Thu 8 Oct, 09:00–09:30 with Dr. Kulkarni"}]})]
+    t = _template_from_events(events)
+    assert t and t != NO_REPLY_FALLBACK
+    assert "Thu 8 Oct, 09:00–09:30 with Dr. Kulkarni" in t
+
+
+def test_no_availability_is_stated_instead_of_a_greeting():
+    """Live Test 18: the tools knew 25 Dec was empty and the caller was asked
+    how they could be helped."""
+    from app.agent.graph import _template_from_events, NO_REPLY_FALLBACK
+    t = _template_from_events([rev("search_slots", False, "NOT_FOUND", {})])
+    assert t and t != NO_REPLY_FALLBACK
+    assert "couldn't find an open slot" in t.lower()
+
+
+def test_ambiguous_appointments_are_listed_with_their_times():
+    """Live Tests 8/11/12 ended in the canned opener; they must end in a
+    question the caller can actually answer."""
+    from app.agent.graph import _template_from_events, NO_REPLY_FALLBACK
+    events = [rev("cancel_appointment", False, "APPOINTMENT_AMBIGUOUS", {"candidates": [
+        {"appointment_id": 12, "display": "Thu 8 Oct, 11:00–11:30 with Dr. Mehta"},
+        {"appointment_id": 13, "display": "Thu 8 Oct, 14:00–14:30 with Dr. Mehta"}]})]
+    t = _template_from_events(events)
+    assert t != NO_REPLY_FALLBACK
+    assert "#12" in t and "#13" in t and "Thu 8 Oct" in t
+
+
+def test_third_party_refusal_is_explained():
+    from app.agent.graph import _template_from_events, NO_REPLY_FALLBACK
+    t = _template_from_events([rev("lookup_patient", False, "THIRD_PARTY_IDENTITY", {})])
+    assert t and t != NO_REPLY_FALLBACK
+    assert "someone else" in t.lower()

@@ -7,6 +7,7 @@ const reasonTone: Record<string, string> = {
   EMERGENCY: 'bg-rose-500/15 text-rose-300 border-rose-400/25',
   CLINICAL: 'bg-amber-500/15 text-amber-300 border-amber-400/25',
   LLM_UNAVAILABLE: 'bg-slate-500/15 text-slate-300 border-slate-400/25',
+  SYSTEM_ERROR: 'bg-orange-500/15 text-orange-300 border-orange-400/25',
   POLICY_BLOCK: 'bg-amber-500/15 text-amber-300 border-amber-400/25',
   USER_REQUEST: 'bg-sky-500/15 text-sky-300 border-sky-400/25',
 }
@@ -15,6 +16,7 @@ const REASON_WORDS: Record<string, string> = {
   EMERGENCY: 'Emergency',
   CLINICAL: 'Medical question',
   LLM_UNAVAILABLE: 'Assistant offline',
+  SYSTEM_ERROR: 'System fault',
   POLICY_BLOCK: 'Blocked by policy',
   USER_REQUEST: 'Human requested',
 }
@@ -52,13 +54,20 @@ export default function HandoffsPage() {
   }, [selected])
 
   async function resolve(h: QueueHandoff) {
-    await api.resolve(h.id)
+    // If the write fails, say where — a button that silently does nothing is
+    // worse than an error line, and the selection must stay put.
+    try {
+      await api.resolve(h.id)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e))
+      return
+    }
     setSelected(null)
     refresh()
   }
 
   return (
-    <div className="grid lg:grid-cols-[380px_1fr] gap-4 items-start">
+    <div className="grid md:grid-cols-[320px_1fr] gap-4 items-start">
       {/* queue */}
       <section className="card">
         <div className="px-4 py-3 border-b border-white/10 flex items-center gap-3">
@@ -86,12 +95,21 @@ export default function HandoffsPage() {
                 onClick={() => setSelected(h)}
                 className={`w-full text-left px-4 py-3 transition-colors hover:bg-white/5 ${
                   selected?.id === h.id ? 'bg-white/10' : ''
-                }`}
+                } ${h.status === 'RESOLVED' ? 'opacity-55' : ''}`}
               >
                 <div className="flex items-center gap-2">
-                  <span>{h.reason === 'EMERGENCY' ? '🔴' : '🟡'}</span>
+                  <span aria-hidden>
+                    {h.status === 'RESOLVED' ? '✓' : h.reason === 'EMERGENCY' ? '🔴' : '🟡'}
+                  </span>
                   <Badge tone={reasonTone[h.reason] ?? reasonTone.USER_REQUEST}>{REASON_WORDS[h.reason] ?? h.reason}</Badge>
-                  <span className="ml-auto text-[11px] text-slate-500">{ago(h.created_at)}</span>
+                  {/* a closed handoff must look closed in the list, not just
+                      in the detail pane you have to click into */}
+                  {h.status === 'RESOLVED' && (
+                    <span className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-emerald-300">
+                      resolved
+                    </span>
+                  )}
+                  <span className="ml-auto shrink-0 text-[11px] text-slate-500">{ago(h.created_at)}</span>
                 </div>
                 <p className="mt-1.5 text-xs text-slate-400 line-clamp-2">{h.summary}</p>
                 <p className="mt-1 text-[11px] text-slate-500">
@@ -166,6 +184,7 @@ export default function HandoffsPage() {
                     {selected.reason === 'EMERGENCY' ? '⛔ Emergency handoff' :
                      selected.reason === 'CLINICAL' ? '⚠️ Clinical question' :
                      selected.reason === 'LLM_UNAVAILABLE' ? '🔌 Model unavailable (fail-closed)' :
+                     selected.reason === 'SYSTEM_ERROR' ? '🛠️ System fault (fail-closed)' :
                      '🤝 Human requested'}
                   </p>
                 </div>

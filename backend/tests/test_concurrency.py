@@ -58,5 +58,9 @@ def test_ten_way_race_one_winner():
     try:
         n = check.query(Appointment).filter_by(slot_id=target, status="ACTIVE").count()
         assert n == 1  # DB agrees with the envelope: one truth, one booking
+        # run with `pytest -s` to print the numbers quoted in the README
+        print(f"\n  10 racing bookings on slot {target}: "
+              f"{len(wins)} BOOKED, {len(losses)} SLOT_NOT_OPEN, "
+              f"{n} ACTIVE row in DB, 0 inconsistent states")
     finally:
         check.close()

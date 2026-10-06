@@ -22,6 +22,7 @@ from app.db.models import Conversation, Slot, Appointment, Patient, Doctor
 from app.schemas.results import (success, failure, SLOT_NOT_FOUND,
                                  IDENTITY_UNCONFIRMED, SLOT_NOT_OPEN,
                                  CONVERSATION_ESCALATED)
+from app.tools.display import slot_text
 
 
 class BookAppointmentArgs(BaseModel):
@@ -66,9 +67,12 @@ def book_appointment(db: Session, conversation_id: str, args: BookAppointmentArg
 
     patient = db.get(Patient, args.patient_id)
     doctor = db.get(Doctor, slot.doctor_id)
+    doctor_name = doctor.name if doctor else None
     return success("BOOKED", appointment_id=appt.id,
                    patient=patient.name, slot={
                        "slot_id": slot.id, "doctor_id": slot.doctor_id,
-                       "doctor": doctor.name if doctor else None,
+                       "doctor": doctor_name,
                        "date": slot.date.isoformat(),
-                       "start": slot.start_time, "end": slot.end_time})
+                       "start": slot.start_time, "end": slot.end_time,
+                       "display": slot_text(slot.date.isoformat(), slot.start_time,
+                                            slot.end_time, doctor_name)})

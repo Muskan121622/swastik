@@ -127,7 +127,7 @@ class Handoff(Base):
     __tablename__ = "handoffs"
     id = Column(Integer, primary_key=True)
     conversation_id = Column(String, ForeignKey("conversations.id"), nullable=False, index=True)
-    reason = Column(String, nullable=False)  # EMERGENCY | CLINICAL | LLM_UNAVAILABLE | POLICY_BLOCK | USER_REQUEST
+    reason = Column(String, nullable=False)  # EMERGENCY | CLINICAL | LLM_UNAVAILABLE | POLICY_BLOCK | USER_REQUEST | SYSTEM_ERROR
     summary = Column(Text, nullable=False)
     status = Column(String, nullable=False, default="OPEN")  # OPEN | RESOLVED
     created_at = Column(DateTime, default=datetime.utcnow)

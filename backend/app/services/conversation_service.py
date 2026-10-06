@@ -61,6 +61,7 @@ def run_turn(conversation_id: str, user_text: str) -> dict:
             "reply": state["reply"],
             "conversation_status": conv.status,
             "safety_label": state.get("safety_label", ""),
+            "reply_substituted": bool(state.get("reply_substituted", False)),
             "events": state.get("events", []),
             "handoff": {"id": handoff.id, "reason": handoff.reason,
                         "status": handoff.status} if handoff else None,

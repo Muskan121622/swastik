@@ -11,6 +11,9 @@ export interface ToolEvent {
   status: 'SUCCESS' | 'ERROR' | 'BLOCKED'
   arguments: Record<string, unknown>
   result: ToolEnvelope
+  /** 'agent' = model-proposed, 'deterministic' = router-fired without the model,
+   *  'safety_gate' / 'fail_closed' = executed by code on a hard stop */
+  origin?: string
   created_at?: string
 }
 
@@ -32,6 +35,8 @@ export interface TurnResponse {
   reply: string
   conversation_status: 'OPEN' | 'ESCALATED' | 'CLOSED'
   safety_label: string
+  /** true when the backend replaced the model's text with a deterministic fallback */
+  reply_substituted?: boolean
   events: ToolEvent[]
   handoff: HandoffSummary | null
 }

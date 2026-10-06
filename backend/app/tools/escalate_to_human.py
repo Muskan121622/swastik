@@ -14,7 +14,8 @@ from app.schemas.results import success, failure, CONVERSATION_ESCALATED
 
 
 class EscalateArgs(BaseModel):
-    reason: Literal["EMERGENCY", "CLINICAL", "LLM_UNAVAILABLE", "POLICY_BLOCK", "USER_REQUEST"] = Field(
+    reason: Literal["EMERGENCY", "CLINICAL", "LLM_UNAVAILABLE", "POLICY_BLOCK",
+                    "USER_REQUEST", "SYSTEM_ERROR"] = Field(
         description="Why a human must take over")
     summary: str = Field(description="Short handoff note for the receptionist")
 

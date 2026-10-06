@@ -124,6 +124,21 @@ far. Auth/model errors fail closed instantly (retrying them is pointless).
 A malformed tool-call is `BLOCKED`, audited, and fed back as a structured
 error; three strikes → human.
 
+A defect *inside* a tool body is also fail-closed, never an HTTP 500 in front
+of a patient. The executor catches it, audits `TOOL_EXECUTION_ERROR`, and the
+turn exits through the graph's single fault node with a `SYSTEM_ERROR` handoff
+— the conversation locks, so no later call can mutate anything.
+
+I found this hole by auditing my own tools against a reviewer's checklist
+rather than trusting that they were fine: `search_slots` passed the model's
+`date` straight into `date.fromisoformat()`, so a proposal of
+`date="tomorrow"` — which gpt-oss genuinely produces — raised `ValueError`
+inside the tool body, escaped `run_turn` and killed the request. The fix is at
+the layer that owns the decision: the args model now rejects non-ISO dates, so
+`policy` blocks the call and hands the model a structured error it can act on;
+the executor's catch is only the backstop for faults nobody predicted. Both
+paths are tested (`tests/integration/test_flows.py`).
+
 **Why.** "The demo degraded silently into a guess" is the worst outcome in an
 evaluation. A visible human handoff *is* correct behaviour, and the queue
 screen makes it obvious.
@@ -136,7 +151,7 @@ the caller stranded with no human in the picture).
 
 **Decision.** `LLMProvider` is a Protocol; tests inject a scripted `MockLLM`
 via the same seam production uses (`runtime.set_provider`). The full graph —
-gate, policy, executor, grounding — runs in tests; 64 tests, zero API calls,
+gate, policy, executor, grounding — runs in tests; 73 tests, zero API calls,
 ~15 s.
 
 **Why.** Determinism claims that require an API key to verify are

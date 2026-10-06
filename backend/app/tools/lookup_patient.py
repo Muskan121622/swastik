@@ -18,7 +18,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Conversation, Patient
-from app.schemas.results import AMBIGUOUS, NOT_FOUND, success, failure
+from app.schemas.results import (AMBIGUOUS, NOT_FOUND, THIRD_PARTY_IDENTITY,
+                                 success, failure)
 
 PHONE_DIGITS = re.compile(r"\D")
 
@@ -82,6 +83,21 @@ def lookup_patient(db: Session, conversation_id: str, args: LookupPatientArgs) -
 
     p = rows[0]
     confirmed = matched_by in ("phone", "name+dob")
+
+    # One conversation, one caller. Phone-as-identity only authenticates the
+    # person who is on the line; it must not let that caller *become* someone
+    # else by typing their number. Without this guard a caller who is asked
+    # "what is <other patient>'s phone?" and answers it silently inherits that
+    # patient's confirmed identity and may then mutate their records.
+    if (confirmed and conv and conv.confirmed_patient_id
+            and conv.confirmed_patient_id != p.id):
+        return failure(
+            THIRD_PARTY_IDENTITY,
+            "This call is already acting for a confirmed patient, so a different "
+            "patient's phone number cannot take it over. Do not act on the other "
+            "patient's records: either continue with the confirmed caller's own "
+            "appointments, or escalate_to_human with reason POLICY_BLOCK.")
+
     if confirmed and conv and conv.status == "OPEN":
         conv.confirmed_patient_id = p.id
         db.commit()

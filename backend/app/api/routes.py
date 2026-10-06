@@ -19,6 +19,7 @@ class MessageOut(BaseModel):
     reply: str
     conversation_status: str
     safety_label: str
+    reply_substituted: bool = False
     events: list[dict]
     handoff: dict | None
 

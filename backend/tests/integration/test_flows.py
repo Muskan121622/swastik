@@ -130,3 +130,55 @@ def test_model_is_shown_the_current_message(db, mock_llm):
     svc.run_turn(conv.id, f"Can you look me up? {marker}")
     first_call = m.calls[0]
     assert any(marker in (msg.get("content") or "") for msg in first_call)
+
+
+def test_model_proposing_relative_date_does_not_kill_the_turn(db, mock_llm):
+    """A real gpt-oss failure mode: date="tomorrow". Schema rejects it, the
+    model gets the structured error, and the caller still receives a reply —
+    never a 500 and never a hand-off for a merely confused proposal."""
+    conv = svc.create_conversation(db)
+    mock_llm([
+        ToolProposal("search_slots", {"date": "tomorrow"}),
+        ReplyProposal("Which day would you like? Please give me a date."),
+    ])
+    r = svc.run_turn(conv.id, "Any slot tomorrow?")
+    ev = [e for e in r["events"] if e["tool"] == "search_slots"][0]
+    assert ev["status"] == "BLOCKED"
+    assert "VALIDATION_ERROR" in str(ev["result"])
+    assert "date" in str(ev["result"]).lower()  # the model is told what is wrong
+    assert r["reply"].strip()
+    assert r["conversation_status"] == "OPEN"
+
+
+def test_unexpected_tool_crash_is_contained_not_propagated(db, mock_llm, monkeypatch):
+    """Fail-closed means "any", including a bug inside a tool body: the turn
+    must end in a human handoff, the transcript must show the failed call, and
+    the conversation must be locked so nothing mutates after the trust break."""
+    from dataclasses import replace
+    from app.tools import registry
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("simulated tool-body defect")
+
+    boom = replace(registry.REGISTRY["search_slots"], fn=explode)
+    monkeypatch.setitem(registry.REGISTRY, "search_slots", boom)
+
+    conv = svc.create_conversation(db)
+    before = db.query(Appointment).count()
+    mock_llm([ToolProposal("search_slots", {"date": "2026-10-07"})])
+
+    r = svc.run_turn(conv.id, "Check availability for me please")
+
+    ev = [e for e in r["events"] if e["tool"] == "search_slots"][0]
+    assert ev["status"] == "ERROR" and ev["result"]["ok"] is False
+    assert ev["result"]["status"] == "TOOL_EXECUTION_ERROR"
+    assert "RuntimeError" in str(ev["result"]["error"]["message"])  # not swallowed
+    assert r["handoff"] and r["handoff"]["reason"] == "SYSTEM_ERROR"
+    assert r["conversation_status"] == "ESCALATED"
+    assert db.query(Appointment).count() == before  # no half-written state
+    # the conversation is now locked: a follow-up cannot mutate anything
+    mock_llm([ToolProposal("book_appointment", {"patient_id": 3, "slot_id": 1})])
+    r2 = svc.run_turn(conv.id, "Anyway just book me")
+    assert r2["conversation_status"] == "ESCALATED"
+    assert db.query(Appointment).count() == before
+

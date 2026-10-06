@@ -1,16 +1,47 @@
 # SwasthiQ — Clinic Front-Desk Conversational Agent
 
-A conversational front-desk agent for a small Indian clinic: a FastAPI backend
-driving a LangGraph agent with six deterministic tools, and a React dashboard
-with the two operator screens (caller conversation + handoff queue/detail).
+A production-minded AI front desk for a small Indian clinic. A caller books,
+reschedules or cancels appointments in plain English **or Hinglish**; the agent
+looks up patients, checks live availability, and hands off to a human on any
+emergency, medical question, or policy risk. A React dashboard shows the live
+conversation **and** a full, honest audit trail of every decision.
 
-Built around one sentence:
+**One sentence that defines the whole design:**
 
-> **The model can propose; only validated deterministic code can mutate state.**
+> **The model can *propose*; only validated deterministic code can *mutate state*.**
 
-Grading rubric this optimises for: Safety 30% · Correctness 25% ·
-Determinism 15% · Restraint 15%. See [`DECISIONS.md`](DECISIONS.md) for the
-reasoning behind every non-obvious choice.
+---
+
+## TL;DR for reviewers
+
+| | |
+|---|---|
+| **What it is** | FastAPI + LangGraph agent (6 deterministic tools) + React dashboard |
+| **The hard part** | Safety: an LLM must never be able to double-book, leak a patient, skip an emergency, or lie about what it did |
+| **How it's guaranteed** | Every state change is enforced by Pydantic + a SQLite partial-unique-index, *not* by prompt hope; replies are grounded against the tool events that actually committed |
+| **Fails safe** | No API key / LLM outage / any ambiguity → escalate to a human, never guess |
+| **Tests** | **93, fully offline & deterministic** (unit · integration · adversarial · a 10-thread double-book race) in ~25 s |
+| **Deploy** | One Dockerfile → one public URL (Render free plan, steps below) |
+| **Tech** | Python 3.11 · FastAPI · LangGraph · SQLAlchemy · SQLite (WAL) · Groq `gpt-oss-120b` · React 18 · TypeScript · Vite · Tailwind |
+
+**Read next:** [`DECISIONS.md`](DECISIONS.md) — the reasoning behind every
+non-obvious choice · [`TEST-REPORT.md`](TEST-REPORT.md) — a 28-point live
+manual test pass with defect register and fixes.
+
+The grading rubric this optimises for: **Safety 30% · Correctness 25% ·
+Determinism 15% · Restraint 15%.**
+
+---
+
+## What it does (2-minute tour)
+
+1. Open the dashboard, type: *"Hi, I'm Priya Singh, phone 9820000003 — earliest slot with Dr. Mehta?"*
+   The agent resolves your identity, lists **real** open slots, and books the one you pick.
+2. Under the reply you see the exact tool calls that produced it, their status, and a
+   collapsible raw audit payload — plus a **safety trace** that only lights
+   "record committed" when a tool actually wrote state.
+3. Type *"I have severe chest pain"* → the call is escalated **by code before the LLM is
+   ever consulted**, the conversation locks, and it appears in the handoff queue.
 
 ---
 
@@ -45,7 +76,7 @@ npm install
 npm run dev                      # http://localhost:5175  (proxies /api -> :8005)
 ```
 
-### 3. Tests — 64 tests, fully offline & deterministic (~15 s)
+### 3. Tests — 93 tests, fully offline & deterministic (~25 s)
 
 ```bash
 cd backend
@@ -66,6 +97,7 @@ venv\Scripts\python.exe scripts\smoke_live.py http://127.0.0.1:8005
 | `tests/unit/test_safety.py` | emergency/clinical regexes incl. Hinglish |
 | `tests/unit/test_grounding.py` | ungrounded claims are stripped or replaced |
 | `tests/integration/test_flows.py` | full graph wiring with scripted decisions |
+| `tests/integration/test_deterministic_router.py` | the recovery router carries out obvious steps (lookup / explicit-id cancel / single-slot book) **even when the model only returns prose** — in English *and* Hinglish |
 | `tests/adversarial/test_adversarial.py` | lying model, prompt injection, fake slot ids, unknown tools, LLM outage, wrong-patient cancels, post-escalation locks |
 | `tests/test_concurrency.py` | **10 threads race for one slot → exactly 1 wins** |
 
@@ -110,6 +142,32 @@ or Postgres with the uniqueness invariant re-declared as `postgresql_where`
 
 ---
 
+## Deploy it — step by step (~5 minutes, free)
+
+The whole product is one Docker image, so any container host works. Render is
+pre-wired via the committed [`render.yaml`](render.yaml) blueprint.
+
+1. Push this repo to GitHub.
+2. Render → **New +** → **Blueprint** → connect the repo (Render reads `render.yaml`).
+3. When prompted, paste a **`GROQ_API_KEY`** (free key at console.groq.com).
+   *Leave it blank to demo the fail-closed path — every turn escalates to a human.*
+4. **Apply** → Render builds the Dockerfile and gives you
+   `https://<name>.onrender.com` — the UI **and** `/api` from one origin.
+
+Local / any host, equivalent:
+
+```bash
+docker build -t swasthiq .
+docker run -p 8005:8005 -e PORT=8005 -e GROQ_API_KEY=sk_... swasthiq
+```
+
+**Free-plan caveats (honest):** ephemeral disk → bookings reset on redeploy or
+15-min idle; the app cold-starts in ~1 min. For a real clinic, upgrade to a paid
+instance and mount a disk — uncomment the 4-line `disk` + `DATABASE_URL` block at
+the bottom of `render.yaml`; **no code change is required.**
+
+---
+
 ## Architecture
 
 ```
@@ -124,16 +182,31 @@ POST /api/conversations/{id}/messages
         ▼
       agent_llm  ◄──────────────────┐
         │  proposes tool call       │  (LangGraph loop, ≤4 tool calls/turn)
-        ▼                           │
-      policy: Pydantic args validation + budget
+        ├─ prose instead of a call ─► router ─┐  deterministic recovery: if the
+        │                                    │  caller's own words + DB state
+        │                                    │  make the next step unambiguous
+        │                                    │  (phone→lookup, "#12"→cancel,
+        │                                    │  one slot→book) it fires the tool
+        │                                    │  itself — no model consulted.
+        ▼                                    │ ambiguous → finalize (model reply)
+      policy: Pydantic args validation + budget ◄┘
         │ valid                     │ invalid → structured error back to model (bounded)
-        ▼
+        ▼                           │
   tool_executor: six deterministic tools → SQLite (single source of truth)
         │ every execution persisted as a ToolEvent (audit trail)
         ▼
   finalize: grounding validator — the model may only claim what a successful
             tool event actually did; otherwise → deterministic fallback
 ```
+
+The `router` is a **safety net behind the model, never in front of it**: the
+model still leads every turn, and the router only fires when the model has
+returned text *instead of* the tool call its own context made obvious — the
+most common real failure mode of small open models. It invents nothing (uses
+the DB-confirmed patient id) and every step still runs through the same
+`policy` → tool validation, so identity, ownership and the booking invariant
+are enforced exactly as before. This keeps the loop robust **without** relaxing
+any safety guarantee.
 
 **Data model.** `Doctor`, `Patient` (unique phone), `Slot` (30 min, no status
 column — availability is *derived*: a slot is taken iff an `ACTIVE`
@@ -209,19 +282,42 @@ rare and always handled.
 5. **Fail closed, never sideways.** Provider outage (bad key, network, rate
    limit) → `LLM_UNAVAILABLE` handoff. A malformed tool call is BLOCKED,
    audited, and returned to the model as a structured error (3 strikes →
-   human).
+   human). A defect *inside* a tool body (an unexpected exception, not a
+   rejected argument) is caught, audited as `TOOL_EXECUTION_ERROR`, and
+   becomes a `SYSTEM_ERROR` handoff — the caller gets a warm "something went
+   wrong, a human has it" reply instead of an HTTP 500.
 6. **Budget.** ≤4 tool calls per turn, ≤1 escalate per conversation, bounded
    invalid-proposal retries — no infinite agent loops.
+7. **The obvious step never depends on the model.** A deterministic recovery
+   router carries out a lookup / explicit-id cancel / single-slot booking when
+   the caller's own words plus DB state make it unambiguous, even if the model
+   stalls into prose — and it is **bilingual** (English + Hinglish), matching
+   the safety gate. A router-fired write is reported to the UI as
+   `reply_substituted` (a `no-llm` chip on the event) rather than passed off as
+   the model's own grounded answer, so the audit trail never overstates who did
+   what.
 
 ## The frontend dashboard
 
-* **Chat screen** — caller view with the live tool-event chips above each
-  agent reply, safety trace for the last turn (gate → validate → commit →
-  ground), conversation status, and one-click demo scripts. Input disables
+* **Chat screen** — caller view. Each agent reply is preceded by the tool
+  events that produced it: tool name, a human-readable outcome, the status
+  pill, and a collapsible raw `{arguments, result}` audit payload. The side
+  panel shows the turn's **outcome as facts lifted out of those envelopes**
+  (status, patient, appointment id, doctor, slot) plus a safety trace whose
+  *appointment record committed* line lights up only for the three tools that
+  actually write clinic state — a successful read is deliberately not allowed
+  to look like a commit, because a dashboard that overstates state is the same
+  fault the grounding validator stops the model from making. Input disables
   itself when the conversation is handed to a human.
-* **Handoff screen** — queue (auto-refreshing, reason badges, age) + detail
-  view with the full transcript, complete audit trail, confirmed patient,
-  active appointments and a *Mark resolved* action.
+* **Handoff screen** — queue (auto-refreshing, reason badges, age; resolved
+  rows dimmed with a ✓ and a *resolved* tag so a closed item can't be mistaken
+  for an open one) + detail view with the full transcript, complete audit
+  trail, confirmed patient, active appointments and a *Mark resolved* action
+  that reports a failed write instead of doing nothing.
+* **Failure states** — a stopped or sleeping API reads as "cannot reach the
+  front-desk service… then try again", an API error surfaces its own
+  `detail.message`, and an empty queue says so in words rather than showing a
+  blank panel.
 
 ## Demo scripts worth running (in order)
 
@@ -249,7 +345,7 @@ backend/
     tools/                 six tools + registry (schemas shared with the LLM)
     db/                    models (the invariant), seed, session
     services/              per-turn orchestration + persistence
-  tests/                   unit · integration · adversarial · concurrency (64, offline)
+  tests/                   unit · integration · adversarial · concurrency (93, offline)
   scripts/smoke_live.py    real-model end-to-end smoke
 frontend/                  React 18 + TypeScript + Vite + Tailwind
   src/pages/ChatPage.tsx   caller screen + safety trace
@@ -261,6 +357,7 @@ Dockerfile                 multi-stage: builds the SPA, then serves it from
 render.yaml                Render blueprint (free plan; disk upgrade commented)
 backend/.env.example       documented env contract; the real .env is gitignored
 DECISIONS.md               every ambiguity, the choice made, and why
+TEST-REPORT.md             28-point live manual test pass + defect register + fixes
 README.md                  this file
 AI_TRANSCRIPT.jsonl        full build-session transcript with the coding agent
 ```
@@ -285,10 +382,12 @@ matching `test_0N_*` in `backend/tests/adversarial/`:
 
 ## Time spent, and what four more hours would buy
 
-**Actual hours:** ~26 across three sessions — architecture & the DB invariant
+**Actual hours:** ~30 across four sessions — architecture & the DB invariant
 (~5), six tools + agent graph + safety gate + grounding (~9), test suites incl.
 adversarial & concurrency (~5), frontend two screens (~4), README/DECISIONS and
-the recruiter-style adversarial audit (~3).
+the recruiter-style adversarial audit (~3), a 28-point **live manual test pass**
+that surfaced seven defects (D1–D7) and the fixes for each, plus the deterministic
+recovery router (~4). See [`TEST-REPORT.md`](TEST-REPORT.md).
 
 **With four more hours, in priority order:**
 1. **Auth on the read side** — the enumerable `GET /api/conversations/{id}`

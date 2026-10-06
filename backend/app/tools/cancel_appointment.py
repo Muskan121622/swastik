@@ -14,6 +14,7 @@ from app.db.models import Conversation, Appointment, Patient
 from app.schemas.results import (success, failure, IDENTITY_UNCONFIRMED,
                                  APPOINTMENT_NOT_FOUND, ALREADY_CANCELLED,
                                  APPOINTMENT_AMBIGUOUS, CONVERSATION_ESCALATED)
+from app.tools.display import appointment_brief
 
 
 class CancelArgs(BaseModel):
@@ -45,12 +46,14 @@ def _find_target(db: Session, args: CancelArgs):
     if not rows:
         return None, failure(APPOINTMENT_NOT_FOUND, "This patient has no active appointment.")
     if len(rows) > 1:
+        # Candidates must be describable in the caller's own terms (day, time,
+        # doctor). Ids alone are useless: the caller already said "October 8 at
+        # 11:00 AM" and there is nothing here to match those words against.
         return None, failure(APPOINTMENT_AMBIGUOUS,
-                             "Patient has multiple active appointments. "
-                             "Ask which appointment_id to cancel.",
-                             candidates=[{"appointment_id": a.id,
-                                          "doctor_id": a.doctor_id,
-                                          "slot_id": a.slot_id} for a in rows])
+                             "Patient has multiple active appointments. Ask which "
+                             "one to cancel, using the day/time/doctor shown, or "
+                             "the appointment_id if the caller states one.",
+                             candidates=[appointment_brief(db, a) for a in rows])
     return rows[0], None
 
 
@@ -71,4 +74,5 @@ def cancel_appointment(db: Session, conversation_id: str, args: CancelArgs) -> d
     db.commit()
     patient = db.get(Patient, args.patient_id)
     return success("CANCELLED", appointment_id=appt.id, patient=patient.name,
-                   freed_slot_id=appt.slot_id)
+                   freed_slot_id=appt.slot_id,
+                   cancelled=appointment_brief(db, appt))

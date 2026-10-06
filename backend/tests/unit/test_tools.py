@@ -1,6 +1,7 @@
 """Unit tests: the six tools are pure deterministic functions — no LLM,
 no graph. Every safety-relevant behaviour is provable here alone."""
 import pytest
+from pydantic import ValidationError
 
 from app.tools.lookup_patient import lookup_patient, LookupPatientArgs
 from app.tools.search_slots import search_slots, SearchSlotsArgs
@@ -59,6 +60,27 @@ def test_search_excludes_taken_slots(db, conv):
     # seed pre-booked doctor 2's first slot -> it must not appear as open
     taken = {a.slot_id for a in db.query(Appointment).filter_by(status="ACTIVE")}
     assert taken & {s["slot_id"] for s in r["data"]["slots"]} == set()
+
+
+def test_search_empty_result_is_not_found_not_empty_list(db, conv):
+    """A date beyond the seed horizon has no slots - must be NOT_FOUND,
+    so the agent never offers the caller a blank menu it must invent."""
+    r = search_slots(db, conv.id, SearchSlotsArgs(date="2030-01-01"))
+    assert r["ok"] is False and r["status"] == "NOT_FOUND"
+
+
+def test_search_invalid_date_is_rejected_not_silently_ignored(db, conv):
+    """Checklist #3: invalid date. A bad date must not degrade into
+    "all slots" - the caller would be offered days that were never asked for."""
+    with pytest.raises(Exception) as exc:
+        search_slots(db, conv.id, SearchSlotsArgs(date="31-12-2026"))
+    assert "date" in str(exc.value).lower() or "isoformat" in str(exc.value).lower()
+
+
+def test_search_invalid_doctor_id_returns_not_found(db, conv):
+    """Checklist #3: invalid doctor. Unknown filters yield no rows, not a crash."""
+    r = search_slots(db, conv.id, SearchSlotsArgs(doctor_id=9999))
+    assert r["ok"] is False and r["status"] == "NOT_FOUND"
 
 
 # ---------- book_appointment: gates + invariants ----------------------------
@@ -162,6 +184,39 @@ def test_cancel_wrong_patient_blocked(db, confirmed_conv):
     assert db.get(Appointment, amit_appt.id).status == "ACTIVE"
 
 
+def test_cancel_nonexistent_appointment_id(db, confirmed_conv):
+    """Checklist #7: "Cancel appointment A999999" -> structured not-found."""
+    r = cancel_appointment(db, confirmed_conv.id,
+                           CancelArgs(patient_id=3, appointment_id=987654))
+    assert r["ok"] is False and r["status"] == "APPOINTMENT_NOT_FOUND"
+
+
+def test_reschedule_nonexistent_appointment_id(db, confirmed_conv):
+    _, slot = _book(db, confirmed_conv, 3)
+    dest = free_slot(db, doctor_id=2)
+    r = reschedule_appointment(db, confirmed_conv.id,
+                               RescheduleArgs(patient_id=3, appointment_id=987654,
+                                              new_slot_id=dest.id))
+    assert r["status"] == "APPOINTMENT_NOT_FOUND"
+
+
+def test_reschedule_to_its_current_slot_is_refused(db, confirmed_conv):
+    """Checklist #3: "same destination slot" must not read as a success."""
+    appt_id, slot = _book(db, confirmed_conv, 3)
+    r = reschedule_appointment(db, confirmed_conv.id,
+                               RescheduleArgs(patient_id=3, appointment_id=appt_id,
+                                              new_slot_id=slot.id))
+    assert r["ok"] is False and r["status"] == "SLOT_NOT_OPEN"
+    assert db.get(Appointment, appt_id).slot_id == slot.id
+
+
+def test_reschedule_to_hallucinated_slot(db, confirmed_conv):
+    _book(db, confirmed_conv, 3)
+    r = reschedule_appointment(db, confirmed_conv.id,
+                               RescheduleArgs(patient_id=3, new_slot_id=999999))
+    assert r["status"] == "SLOT_NOT_FOUND"
+
+
 def test_cancel_frees_slot_for_rebooking(db, confirmed_conv):
     _, slot = _book(db, confirmed_conv, 3)
     cancel_appointment(db, confirmed_conv.id, CancelArgs(patient_id=3))
@@ -192,3 +247,60 @@ def test_escalate_creates_handoff_and_locks(db, confirmed_conv):
     blocked = book_appointment(db, confirmed_conv.id,
                                BookAppointmentArgs(patient_id=3, slot_id=slot.id))
     assert blocked["status"] == "CONVERSATION_ESCALATED"
+
+
+# ---------- live-run defects: D1 display, D2 candidates, D4 identity --------
+def test_slot_display_is_precomposed_and_correct(db, conv):
+    """D1: the model must be handed the words to copy, not an ISO date to
+    translate. 2026-10-08 is a Thursday; gpt-oss called it Saturday seven
+    times while the deterministic fields in the same turn said Thu."""
+    from app.tools.display import when
+    assert when("2026-10-08") == "Thu 8 Oct"
+
+    r = search_slots(db, conv.id, SearchSlotsArgs())
+    assert r["ok"]
+    for s in r["data"]["slots"]:
+        assert s["display"].startswith(when(s["date"]))
+        assert s["start"] in s["display"] and s["end"] in s["display"]
+        assert s["doctor"] in s["display"]
+
+
+def test_ambiguous_candidates_are_describable_in_callers_terms(db, confirmed_conv):
+    """D2: a caller who says "October 8 at 11:00 AM" must be answerable —
+    candidates carrying only ids made Tests 8 and 11 unresolvable."""
+    from app.tools.display import when
+    _book(db, confirmed_conv, 3, doctor_id=1)
+    _book(db, confirmed_conv, 3, doctor_id=3)
+    r = cancel_appointment(db, confirmed_conv.id, CancelArgs(patient_id=3))
+    assert r["status"] == "APPOINTMENT_AMBIGUOUS"
+    cands = r["data"]["candidates"]
+    assert len(cands) >= 2
+    for c in cands:
+        assert c["doctor"] and c["date"] and c["start"] and c["end"]
+        # the display line is what the model is allowed to quote back
+        assert c["display"].startswith(when(c["date"]))
+        assert c["start"] in c["display"] and c["doctor"] in c["display"]
+
+
+def test_second_patient_phone_cannot_take_over_a_confirmed_call(db, confirmed_conv):
+    """D4 (live Test 10/20): the caller was asked for Priya's phone, typed it,
+    and the conversation silently became Priya. Knowledge of someone else's
+    number is not authorization to become them."""
+    r = lookup_patient(db, confirmed_conv.id, LookupPatientArgs(phone="9820000001"))
+    assert r["ok"] is False
+    assert r["status"] == "THIRD_PARTY_IDENTITY"
+    assert confirmed_conv.confirmed_patient_id == 3  # never re-bound
+
+    # the mutation that re-bind was steering toward stays blocked
+    amit_appt = db.query(Appointment).filter_by(patient_id=4).first()
+    c = cancel_appointment(db, confirmed_conv.id,
+                           CancelArgs(patient_id=4, appointment_id=amit_appt.id))
+    assert c["status"] == "IDENTITY_UNCONFIRMED"
+    assert db.get(Appointment, amit_appt.id).status == "ACTIVE"
+
+
+def test_same_patient_may_still_reconfirm(db, confirmed_conv):
+    """The guard must not break the normal case: re-stating your own phone."""
+    r = lookup_patient(db, confirmed_conv.id, LookupPatientArgs(phone="9820000003"))
+    assert r["ok"] and r["data"]["identity_confirmed"] is True
+    assert confirmed_conv.confirmed_patient_id == 3
