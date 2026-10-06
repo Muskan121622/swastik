@@ -1,0 +1,36 @@
+:root { color-scheme: dark; }
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply text-ink antialiased;
+  min-height: 100vh;
+  background:
+    radial-gradient(900px 540px at 10% -12%, rgba(56, 189, 248, 0.14), transparent 60%),
+    radial-gradient(840px 560px at 108% 12%, rgba(139, 92, 246, 0.16), transparent 60%),
+    radial-gradient(760px 620px at 50% 125%, rgba(56, 189, 248, 0.07), transparent 60%),
+    linear-gradient(135deg, #0b1220 0%, #0f172a 55%, #131029 100%);
+  background-attachment: fixed;
+}
+
+/* frosted panel — the base surface everywhere */
+.card {
+  @apply rounded-2xl border border-white/10 bg-white/5 shadow-glass backdrop-blur-xl;
+}
+
+.badge {
+  @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold;
+}
+
+/* slim, quiet scrollbars inside glass panels */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-slate-500/30;
+}
+*::-webkit-scrollbar-track { background: transparent; }
