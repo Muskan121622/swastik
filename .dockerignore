@@ -1,0 +1,27 @@
+# Build context hygiene: the image builds its own front end and never needs
+# local artefacts, secrets or verification noise.
+.git
+.gitignore
+
+# dependencies / artefacts built inside the image
+**/node_modules
+frontend/dist
+backend/venv
+**/__pycache__
+.pytest_cache
+
+# secrets and local data — must never enter an image layer
+backend/.env
+backend/data
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# deliverable docs and audit assets (not part of the runtime)
+adversarial
+AI_TRANSCRIPT.jsonl
+README.md
+DECISIONS.md
+backend/tests
+backend/scripts
+/*.png

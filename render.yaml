@@ -1,0 +1,37 @@
+# Render blueprint - one web service, one public URL (FastAPI serves the API
+# and the built React app from the same origin).
+#
+# Dashboard: New -> Blueprint -> connect this repo. Render reads this file,
+# builds ./Dockerfile, and gives you https://<name>.onrender.com.
+#
+# Free plan behaviour (deliberate trade-off, see DECISIONS.md D13):
+#   * spins down after ~15 min idle; first request eats a ~30 s cold start
+#   * the filesystem is ephemeral, so bookings/conversations reset on a
+#     restart. Clinic seed data is recreated on every boot, so the demo
+#     always opens with the same patients, doctors and slots.
+
+services:
+  - type: web
+    name: swasthiq-front-desk
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      # sync: false => prompted once in the dashboard, never stored in git.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+
+  # --- persistence upgrade (paid Starter, $7/mo) ---------------------------
+  # Render free instances cannot attach disks; upgrading lets the sqlite file
+  # survive restarts. Uncomment the disk block AND the DATABASE_URL var:
+  #
+  #   - key: DATABASE_URL
+  #     value: sqlite:////render/clinic.db
+  #
+  #   disk:
+  #     name: clinic-db
+  #     mountPath: /render      # Render requires paths under /render
+  #     sizeGB: 1

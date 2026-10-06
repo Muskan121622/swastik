@@ -69,6 +69,35 @@ venv\Scripts\python.exe scripts\smoke_live.py http://127.0.0.1:8005
 | `tests/adversarial/test_adversarial.py` | lying model, prompt injection, fake slot ids, unknown tools, LLM outage, wrong-patient cancels, post-escalation locks |
 | `tests/test_concurrency.py` | **10 threads race for one slot → exactly 1 wins** |
 
+### 4. Public deployment — one container, one URL
+
+The [`Dockerfile`](Dockerfile) at the repo root builds the whole product: stage 1
+compiles the React app (`npm ci && tsc && vite build`), stage 2 installs the
+Python runtime and copies `frontend/dist` next to it. FastAPI then serves the API
+**and** the SPA from the same origin, so `VITE_API_URL` stays empty, there is no
+CORS decision to make, and a reviewer gets a single link.
+
+```bash
+docker build -t swasthiq .
+docker run -p 8005:8005 -e PORT=8005 -e GROQ_API_KEY=... swasthiq
+# → http://localhost:8005  (UI and /api/health from one process)
+```
+
+Two deliberate details:
+
+* `--workers 1`. The "one ACTIVE booking per slot" invariant is enforced by a
+  partial unique index, which is correct across workers, but the WAL
+  busy-timeout and the single-writer queue give cleaner behaviour under the
+  concurrency test with one process. Multi-worker needs Postgres first.
+* Unmatched `/api/*` paths return a machine-readable `ENDPOINT_NOT_FOUND`
+  envelope rather than `index.html` — the SPA fallback never swallows the API
+  contract.
+
+Environment variables the image reads: `PORT` (injected by the platform),
+`GROQ_API_KEY` (optional — absent means fail-closed handoffs), `GROQ_MODEL`,
+`DATABASE_URL` (defaults to `backend/data/clinic.db`; point it at a mounted
+volume to survive redeploys).
+
 ---
 
 ## Architecture
@@ -217,6 +246,10 @@ frontend/                  React 18 + TypeScript + Vite + Tailwind
   src/pages/HandoffsPage.tsx  queue + review detail
 adversarial/               8 written attack scripts (see below), each automated
                            by a matching numbered test in the adversarial suite
+Dockerfile                 multi-stage: builds the SPA, then serves it from
+                           FastAPI — one image, one public origin
+render.yaml                Render blueprint (free plan; disk upgrade commented)
+backend/.env.example       documented env contract; the real .env is gitignored
 DECISIONS.md               every ambiguity, the choice made, and why
 README.md                  this file
 AI_TRANSCRIPT.jsonl        full build-session transcript with the coding agent

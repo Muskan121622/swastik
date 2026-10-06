@@ -168,7 +168,7 @@ calls and small-talk turns).
 | SSE / websockets | a turn is one request/reply; polling the queue every 5 s is honest |
 | Idempotency keys | no retry-on-disconnect story to serve; the DB invariant already prevents the harmful duplicate |
 | Alembic migrations | schema ships once; `create_all` + wipe-able dev DB |
-| Docker / CI | README quickstart is 6 commands; a Dockerfile would be decoration |
+| Docker / CI | *not* skipped in the end — the brief needs a public live URL, so there is one Dockerfile and a `render.yaml` (D13). No CI yaml: `pytest` is the whole pipeline and it runs in 15 s locally |
 | Vector memory / RAG | patients are exact-match by design (D3); fuzzy recall is the *opposite* of safe |
 | Slots beyond seed horizon | reschedule-to-arbitrary-date needs pricing/policies a 3-day brief can't specify |
 
@@ -198,3 +198,35 @@ infrastructure.
 (404), while gpt-oss models are tool-call capable and follow the identity/
 ambiguity rules with temperature 0.1. The provider keeps everything else
 model-agnostic — one env var swaps it, tests never notice (D8).
+
+## D13. Deployment: one container on Render, ephemeral sqlite accepted
+
+**Decision.** A single multi-stage Dockerfile builds the React app and the
+FastAPI runtime; Render hosts that one image behind one URL, and FastAPI
+serves `frontend/dist` itself. Deployed on the **free** plan, which cannot
+attach a persistent disk, so the sqlite file is ephemeral and resets on a
+restart.
+
+**Why.** One origin removes the CORS question, the `VITE_API_URL` build-time
+variable and the "frontend can't reach the API" class of demo failure — the
+three ways a two-service split most often embarrasses a take-home. Serverless
+(Vercel-style) was worse for this specific app: the agent turn is a blocking
+LLM call, and an ephemeral function also throws away the single-process
+assumption the concurrency test relies on. Data loss on restart is acceptable
+because `seed()` re-runs on boot, so every reviewer opens the same clinic; a
+booking surviving a redeploy is an operator feature, not a rubric property.
+
+**Rejected.** Two services (split frontend/backend) — extra moving parts for
+no graded benefit; Render Postgres add-on — would mean re-implementing the
+uniqueness invariant with `postgresql_where` (the current index is
+SQLite-specific, stated in D11) and shipping a schema I could not test on this
+machine; paid Starter + `/render` disk — the right answer for a real clinic and
+left as a three-line uncomment in `render.yaml`.
+
+**What I verified rather than assumed.** The exact image Render builds was run
+locally: `/` served the SPA, `/handoffs` fell back to `index.html`, an unmatched
+`/api/*` still returned a JSON 404 instead of HTML, and a full turn booked
+Priya with Dr. Mehta (`lookup_patient=FOUND, search_slots=OK,
+book_appointment=BOOKED`). `--workers 1` is pinned in the CMD: the partial
+unique index is safe across workers, but one process keeps the WAL busy-timeout
+queue honest and matches the tested behaviour.
