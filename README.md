@@ -98,6 +98,16 @@ Environment variables the image reads: `PORT` (injected by the platform),
 `DATABASE_URL` (defaults to `backend/data/clinic.db`; point it at a mounted
 volume to survive redeploys).
 
+**What the free plan costs you.** Free Render instances have an ephemeral
+filesystem, so the sqlite file is lost on every redeploy, restart *and* idle
+spin-down (15 min without traffic; the next request waits ~1 min). Clinic seed
+data is rebuilt at boot, so the app always opens in a known state — but a
+booking made 20 minutes ago will not still be there. Two honest fixes, neither
+of which changes a line of agent code: a paid instance with a `/render` disk
+(`DATABASE_URL=sqlite:////render/clinic.db`, commented out in `render.yaml`),
+or Postgres with the uniqueness invariant re-declared as `postgresql_where`
+(the one-line port already anticipated in D11).
+
 ---
 
 ## Architecture

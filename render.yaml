@@ -5,10 +5,14 @@
 # builds ./Dockerfile, and gives you https://<name>.onrender.com.
 #
 # Free plan behaviour (deliberate trade-off, see DECISIONS.md D13):
-#   * spins down after ~15 min idle; first request eats a ~30 s cold start
-#   * the filesystem is ephemeral, so bookings/conversations reset on a
-#     restart. Clinic seed data is recreated on every boot, so the demo
-#     always opens with the same patients, doctors and slots.
+#   * spins down after 15 min without traffic; the next request waits ~1 min
+#   * the filesystem is EPHEMERAL on free instances: bookings and
+#     conversations are lost on every redeploy, restart AND spin-down.
+#     Clinic seed data is recreated on every boot, so the demo always opens
+#     with the same patients, doctors and slots - just not the same bookings.
+#   * 750 free instance hours per calendar month across the workspace.
+# Keep a reviewer's session alive by clicking the app every few minutes, or
+# move to the paid plan below for real persistence.
 
 services:
   - type: web

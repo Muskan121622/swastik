@@ -212,9 +212,13 @@ variable and the "frontend can't reach the API" class of demo failure — the
 three ways a two-service split most often embarrasses a take-home. Serverless
 (Vercel-style) was worse for this specific app: the agent turn is a blocking
 LLM call, and an ephemeral function also throws away the single-process
-assumption the concurrency test relies on. Data loss on restart is acceptable
-because `seed()` re-runs on boot, so every reviewer opens the same clinic; a
-booking surviving a redeploy is an operator feature, not a rubric property.
+assumption the concurrency test relies on. Data loss is acceptable *for a
+review demo*: free instances lose the sqlite file on every redeploy, restart
+and 15-minute idle spin-down, but `seed()` re-runs on boot, so every reviewer
+opens the same clinic with the same patients, doctors and slots — only the
+bookings they just made can vanish if they step away mid-call. Persisting a
+booking across a redeploy is an operator feature, not a rubric property, and
+the fix is a config line, not a refactor.
 
 **Rejected.** Two services (split frontend/backend) — extra moving parts for
 no graded benefit; Render Postgres add-on — would mean re-implementing the
