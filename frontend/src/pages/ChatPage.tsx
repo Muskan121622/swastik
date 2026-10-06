@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, ApiError } from '../api'
 import type { ToolEvent, TurnResponse } from '../types'
 import { EventChip, SafetyTrace, Badge, RichText, OutcomePanel } from '../components/bits'
 
@@ -40,7 +40,23 @@ export default function ChatPage() {
     setBubbles((b) => [...b, { role: 'user', content: text }])
     setInput('')
     try {
-      const r = await api.sendMessage(cid, text)
+      let active = cid
+      let r: TurnResponse
+      try {
+        r = await api.sendMessage(active, text)
+      } catch (e) {
+        // Free-tier Render wipes its ephemeral SQLite on idle spin-down, so the
+        // conversation opened when this tab loaded may no longer exist. Recover
+        // transparently once: start a fresh line and resend the same message.
+        if (e instanceof ApiError && e.code === 'CONV_NOT_FOUND') {
+          const fresh = await api.newConversation()
+          active = fresh.conversation_id
+          setCid(active)
+          r = await api.sendMessage(active, text)
+        } else {
+          throw e
+        }
+      }
       setLast(r)
       setBubbles((b) => [...b, { role: 'agent', content: r.reply, events: r.events }])
     } catch (e) {

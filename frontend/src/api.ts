@@ -2,6 +2,19 @@ import type { ConversationDetail, QueueHandoff, TurnResponse } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
+/** Error carrying the API's machine-readable code (e.g. CONV_NOT_FOUND) so
+ *  callers can recover from specific failures, not just show the message. */
+export class ApiError extends Error {
+  code?: string
+  status?: number
+  constructor(message: string, opts?: { code?: string; status?: number }) {
+    super(message)
+    this.name = 'ApiError'
+    this.code = opts?.code
+    this.status = opts?.status
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
@@ -16,15 +29,18 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     // The API fails with a machine-readable {detail:{code,message}} body; show
-    // the human half of that rather than a dumped JSON blob.
+    // the human half of that rather than a dumped JSON blob, and keep the code
+    // so callers can react to specific failures (e.g. a lost conversation).
     let msg = `The service answered with HTTP ${res.status}.`
+    let code: string | undefined
     try {
       const body = await res.json()
       const d = body?.detail
+      code = d && typeof d === 'object' ? d.code : undefined
       const text = d && typeof d === 'object' ? (d.message ?? d.code) : d
       if (typeof text === 'string' && text.trim()) msg = text
     } catch { /* body wasn't JSON — keep the generic line */ }
-    throw new Error(msg)
+    throw new ApiError(msg, { code, status: res.status })
   }
   return res.json() as Promise<T>
 }

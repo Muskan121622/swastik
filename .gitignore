@@ -1,9 +1,16 @@
 # secrets & local data
 backend/.env
+.env
+.env.local
+frontend/.env
+frontend/.env.local
 backend/data/
 *.db
 *.db-wal
 *.db-shm
+
+# vercel
+.vercel/
 
 # python
 backend/venv/

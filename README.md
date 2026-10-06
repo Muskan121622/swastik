@@ -21,7 +21,7 @@ conversation **and** a full, honest audit trail of every decision.
 | **How it's guaranteed** | Every state change is enforced by Pydantic + a SQLite partial-unique-index, *not* by prompt hope; replies are grounded against the tool events that actually committed |
 | **Fails safe** | No API key / LLM outage / any ambiguity → escalate to a human, never guess |
 | **Tests** | **93, fully offline & deterministic** (unit · integration · adversarial · a 10-thread double-book race) in ~25 s |
-| **Deploy** | One Dockerfile → one public URL (Render free plan, steps below) |
+| **Deploy** | API on Render + SPA on Vercel (free), or one Dockerfile → one URL (steps below) |
 | **Tech** | Python 3.11 · FastAPI · LangGraph · SQLAlchemy · SQLite (WAL) · Groq `gpt-oss-120b` · React 18 · TypeScript · Vite · Tailwind |
 
 **Read next:** [`DECISIONS.md`](DECISIONS.md) — the reasoning behind every
@@ -144,27 +144,44 @@ or Postgres with the uniqueness invariant re-declared as `postgresql_where`
 
 ## Deploy it — step by step (~5 minutes, free)
 
-The whole product is one Docker image, so any container host works. Render is
-pre-wired via the committed [`render.yaml`](render.yaml) blueprint.
+**Topology: backend on Render, frontend on Vercel.** The React SPA is a static
+build that calls the FastAPI API over the network; `VITE_API_URL` (build-time)
+tells it where, and `ALLOWED_ORIGINS` (runtime) lets that origin through CORS.
 
+**1. Backend → Render** (reads the committed [`render.yaml`](render.yaml))
 1. Push this repo to GitHub.
-2. Render → **New +** → **Blueprint** → connect the repo (Render reads `render.yaml`).
-3. When prompted, paste a **`GROQ_API_KEY`** (free key at console.groq.com).
-   *Leave it blank to demo the fail-closed path — every turn escalates to a human.*
-4. **Apply** → Render builds the Dockerfile and gives you
-   `https://<name>.onrender.com` — the UI **and** `/api` from one origin.
+2. Render → **New +** → **Blueprint** → connect the repo.
+3. Paste `GROQ_API_KEY` when prompted (free at console.groq.com). *Blank = the
+   fail-closed demo path.* Deploy → note the URL, e.g. `https://swasthiq-api.onrender.com`.
 
-Local / any host, equivalent:
+**2. Frontend → Vercel**
+1. Vercel → **Add New → Project** → import the same repo.
+2. Set **Root Directory = `frontend`** (Vercel auto-detects Vite; `vercel.json`
+   handles the SPA fallback).
+3. Add env var **`VITE_API_URL = https://<your-render-url>`**, then Deploy.
+
+**3. Close the CORS loop on Render**
+Set the Render service env var **`ALLOWED_ORIGINS = https://<your-vercel-url>`**
+and redeploy. (The `render.yaml` default points at `swasthiq.vercel.app` — change
+it to your real Vercel origin.)
+
+> **Order matters:** `VITE_*` is baked into the bundle at build time, so the
+> backend URL must exist *before* the Vercel build; CORS must list the Vercel URL
+> *before* the browser calls succeed. Deploy backend → set its URL in Vercel →
+> deploy frontend → set Vercel's URL back in Render.
+
+Local / any container host (single-origin alternative — the [`Dockerfile`](Dockerfile)
+bundles the SPA into the API, no CORS or `VITE_API_URL` needed):
 
 ```bash
 docker build -t swasthiq .
 docker run -p 8005:8005 -e PORT=8005 -e GROQ_API_KEY=sk_... swasthiq
 ```
 
-**Free-plan caveats (honest):** ephemeral disk → bookings reset on redeploy or
-15-min idle; the app cold-starts in ~1 min. For a real clinic, upgrade to a paid
-instance and mount a disk — uncomment the 4-line `disk` + `DATABASE_URL` block at
-the bottom of `render.yaml`; **no code change is required.**
+**Free-plan caveats (honest):** the Render free filesystem is ephemeral →
+bookings reset on redeploy or 15-min idle (cold start ~1 min). For persistence,
+move to a paid instance and uncomment the `disk` + `DATABASE_URL` block in
+`render.yaml`; **no code change is required.**
 
 ---
 

@@ -1,40 +1,52 @@
-# Render blueprint - one web service, one public URL (FastAPI serves the API
-# and the built React app from the same origin).
+# Render blueprint — BACKEND ONLY (API).
 #
-# Dashboard: New -> Blueprint -> connect this repo. Render reads this file,
-# builds ./Dockerfile, and gives you https://<name>.onrender.com.
+# Split deploy: this service runs just the FastAPI agent; the React SPA is
+# hosted separately on Vercel and calls this API over the network (CORS is
+# opened to the Vercel origin via ALLOWED_ORIGINS below).
+#
+# Dashboard: New -> Blueprint -> connect this repo. Render reads this file.
 #
 # Free plan behaviour (deliberate trade-off, see DECISIONS.md D13):
 #   * spins down after 15 min without traffic; the next request waits ~1 min
-#   * the filesystem is EPHEMERAL on free instances: bookings and
-#     conversations are lost on every redeploy, restart AND spin-down.
-#     Clinic seed data is recreated on every boot, so the demo always opens
-#     with the same patients, doctors and slots - just not the same bookings.
-#   * 750 free instance hours per calendar month across the workspace.
-# Keep a reviewer's session alive by clicking the app every few minutes, or
-# move to the paid plan below for real persistence.
+#   * the filesystem is EPHEMERAL on free instances: bookings and conversations
+#     are lost on every redeploy, restart AND spin-down. Clinic seed data is
+#     recreated on boot, so the demo always opens in a known state.
+#   * 750 free instance hours per calendar month.
+# For persistence upgrade to a paid Starter instance and uncomment the disk
+# block at the bottom (no code change required).
 
 services:
   - type: web
-    name: swasthiq-front-desk
-    runtime: docker
+    name: swasthiq-api
+    runtime: python
+    region: oregon
     plan: free
-    dockerfilePath: ./Dockerfile
+    rootDir: backend
+    # Render auto-runs `pip install -r requirements.txt` for the python runtime;
+    # uvicorn binds the port Render injects via $PORT.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
-      # sync: false => prompted once in the dashboard, never stored in git.
-      - key: GROQ_API_KEY
-        sync: false
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b
+      # Comma-separated list of SPA origins allowed to call this API. Set to
+      # your Vercel URL after the frontend deploy (add both the bare and the
+      # www/preview hosts if you use them). Leave as * only for a throwaway demo.
+      - key: ALLOWED_ORIGINS
+        value: https://swasthiq.vercel.app
+      # sync:false => prompted once in the dashboard, never stored in git.
+      - key: GROQ_API_KEY
+        sync: false
 
   # --- persistence upgrade (paid Starter, $7/mo) ---------------------------
-  # Render free instances cannot attach disks; upgrading lets the sqlite file
-  # survive restarts. Uncomment the disk block AND the DATABASE_URL var:
+  # Free instances cannot attach disks. On a paid instance, mount a disk and
+  # point SQLite at it so bookings survive restarts. Uncomment BOTH:
   #
-  #   - key: DATABASE_URL
-  #     value: sqlite:////render/clinic.db
+  #   (add under envVars:)
+  #     - key: DATABASE_URL
+  #       value: sqlite:////render/clinic.db
   #
+  #   (add under the service:)
   #   disk:
   #     name: clinic-db
   #     mountPath: /render      # Render requires paths under /render

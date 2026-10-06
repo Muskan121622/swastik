@@ -26,3 +26,14 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # Deterministic guardrails for the agent loop
 MAX_TOOL_CALLS_PER_TURN = 4
+
+# CORS: in a split deploy the SPA lives on another origin (e.g. Vercel) and the
+# browser sends no cookies (there is no auth), so a configurable allow-list is
+# enough. Default "*" keeps the single-origin/Docker and local-dev cases working
+# untouched; set ALLOWED_ORIGINS to a comma list to lock it down in production.
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()
+]
+# Credentials (cookies) are only meaningful with an explicit origin list; the
+# combination allow_credentials=True + "*" is invalid and browsers reject it.
+ALLOW_CREDENTIALS = "*" not in ALLOWED_ORIGINS

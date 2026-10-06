@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import STATIC_DIR
+from app.config import STATIC_DIR, ALLOWED_ORIGINS, ALLOW_CREDENTIALS
 from app.db.database import init_db, SessionLocal
 from app.db.seed import seed
 from app.api.routes import router
@@ -31,10 +31,12 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="SwasthiQ Front Desk Agent", lifespan=lifespan)
 
+# Split deploy (frontend on Vercel, API here): ALLOWED_ORIGINS lists the SPA
+# origin(s). Wildcard default keeps same-origin Docker + local dev working.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # synthetic data only; no real PII to protect
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
