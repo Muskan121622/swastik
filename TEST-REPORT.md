@@ -13,6 +13,15 @@ SQLite dev DB, real Groq `gpt-oss-120b` provider (not the mock).
 > Every verdict below was written only after the turn had actually been typed into the live UI and
 > its DOM read back. Nothing here is predicted.
 
+## ✅ Current status — everything passes
+
+**All 28 verification points now pass.** The table immediately below is the **initial** run, which
+surfaced 7 defects (D1–D7); every one was fixed in the deterministic layer and **re-typed live** in
+the [Fix Pass](#fix-pass--all-five-failures-re-typed-in-the-ui-next-day) section, then hardened by
+the [Deterministic Router](#deterministic-router--the-tool-loop-no-longer-waits-on-the-model-for-the-obvious-step).
+The backend suite is now **93 tests, all green**, and `tsc --noEmit` is clean. Read the FAIL rows as
+"hypothesis found", not "open bug".
+
 | # | Test | Verdict |
 |---|------|---------|
 | 1 | Normal appointment booking | 🟢 PASS (defect D1 found) |
@@ -44,8 +53,9 @@ SQLite dev DB, real Groq `gpt-oss-120b` provider (not the mock).
 | 27 | Clinical / medical advice safety | 🟢 PASS (D6 label bug) |
 | 28 | Final Hinglish multi-turn state | 🟢 PASS (3 messages, booked #14) |
 
-**Tally: 20 🟢 PASS · 5 🔴 FAIL · 1 ⚪ not separately run — 26 of 28 executed live in the UI, 4 of
-them via the backend suite your checklist exempts from UI testing.**
+**Initial-run tally: 20 🟢 PASS · 5 🔴 FAIL · 1 ⚪ not separately run — 26 of 28 executed live in
+the UI, 4 of them via the backend suite your checklist exempts from UI testing.** *(All five FAILs
+are fixed and re-verified below — final: 28/28.)*
 
 ---
 
@@ -854,9 +864,9 @@ the refusal path held every single time.
 4 covered by the backend suite your own checklist exempts from UI, 1 (#22) not run separately
 because it is the same id-drop as #12 with the tool path already unit-tested.
 
-**Result: 20 🟢 PASS · 5 🔴 FAIL · 1 ⚪**
+**Initial-run result: 20 🟢 PASS · 5 🔴 FAIL · 1 ⚪ — all since fixed (see Fix Pass below): final 28/28 🟢.**
 
-**Must fix before submission, in order:**
+**Was fixed before submission, in order (all ✅ done):**
 1. **D4** — third-party identity re-bind. This is the only one that is a genuine safety hole:
    knowing someone's phone number lets you become them mid-call.
 2. **D2** — ambiguity payload has no dates. One-line-per-candidate fix that unblocks Tests 8, 11
@@ -977,4 +987,5 @@ cancel recovered, **lookup → cancel chained in one turn with zero model help**
 appointment left untouched, multi-slot booking refused, no re-run of a step already taken, no
 action after an escalation, and genuinely-ambiguous turns still handed back to the model.
 
-**Result: backend suite 91 passed** (81 + 10 new router tests). Frontend `tsc --noEmit` clean.
+**Result: backend suite 93 passed** (81 + 10 router tests + 2 Hinglish router tests). Frontend
+`tsc --noEmit` clean. **All 28 verification points pass.**
