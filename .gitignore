@@ -1,0 +1,18 @@
+# secrets & local data
+backend/.env
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+
+# python
+backend/venv/
+__pycache__/
+.pytest_cache/
+
+# node
+frontend/node_modules/
+frontend/dist/
+
+# verification screenshots dropped at repo root during audits (not part of the deliverable)
+/*.png
