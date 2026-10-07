@@ -1,3 +1,14 @@
+# Demo Video 
+
+
+
+https://github.com/user-attachments/assets/e66ae314-b6fc-498f-8c44-cff7bb9566fc
+
+
+
+
+---
+
 # SwasthiQ — Clinic Front-Desk Conversational Agent
 
 A production-minded AI front desk for a small Indian clinic. A caller books,
